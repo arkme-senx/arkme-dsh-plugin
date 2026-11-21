@@ -53,8 +53,47 @@ export class ArkmeArkoProfileStore {
 
   private publish(next: ArkmeArkoProfileStoreSnapshot): void {
     this.snapshot = next
-    for (const listener of this.listeners) listener()
+    for (const listener of [...this.listeners]) {
+      // Listeners may come from an embedded harness frame that has since unloaded.
+      try { listener() } catch { /* One stale label must not stop the others. */ }
+    }
   }
 }
 
-export const arkmeArkoProfileStore = new ArkmeArkoProfileStore()
+const SHARED_STORE_KEY = Symbol.for('arkme.arko-profile-store.v1')
+
+/**
+ * The harness UI is a same-origin iframe, and each plugin bundle loaded there carries its own
+ * copy of this module. Only the outer Arkme app reads and writes the profile, so every bundle
+ * uses the one store kept on the topmost same-origin window: a rename then repaints the labels
+ * inside the iframe too.
+ */
+export function sharedArkoProfileStore(
+  win: Window | undefined = typeof window === 'undefined' ? undefined : window,
+): ArkmeArkoProfileStore {
+  const host = topSameOriginWindow(win) as unknown as Record<symbol, unknown> | undefined
+  const existing = host?.[SHARED_STORE_KEY]
+  if (isProfileStore(existing)) return existing
+  const store = new ArkmeArkoProfileStore()
+  if (host !== undefined) host[SHARED_STORE_KEY] = store
+  return store
+}
+
+function topSameOriginWindow(win: Window | undefined): Window | undefined {
+  let host = win
+  try {
+    while (host !== undefined && host.parent != null && host.parent !== host) {
+      void host.parent.document // Throws for a cross-origin parent.
+      host = host.parent
+    }
+  } catch { /* Stop at the last same-origin window. */ }
+  return host
+}
+
+function isProfileStore(value: unknown): value is ArkmeArkoProfileStore {
+  const store = value as Partial<ArkmeArkoProfileStore> | null | undefined
+  return typeof store?.getSnapshot === 'function' && typeof store.subscribe === 'function'
+    && typeof store.activateUser === 'function' && typeof store.setProfile === 'function'
+}
+
+export const arkmeArkoProfileStore = sharedArkoProfileStore()

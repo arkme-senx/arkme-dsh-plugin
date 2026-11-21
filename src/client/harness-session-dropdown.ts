@@ -2,7 +2,9 @@ import { HARNESS_LOCAL_SESSION_OPEN, HARNESS_MENU_OPEN, HARNESS_MENU_CLOSE, HARN
 import { CONVERSATION_MENU_COLORS, CONVERSATION_MENU_LAYOUT, CONVERSATION_MENU_SURFACE, CONVERSATION_SELECTOR_CSS } from './conversation-selector-style.js'
 import { conversationMenuPosition } from './conversation-menu-layer.js'
 import { watchConversationMenuScrollbars } from './conversation-menu-scrollbars.js'
-import { HARNESS_CONVERSATION_NAME } from './conversation-header-layout.js'
+import { harnessConversationName } from './conversation-header-layout.js'
+import { arkmeArkoProfileStore } from './arko-profile-store.js'
+import { subscribeArkmeLocale } from './locale.js'
 import { HARNESS_SETTINGS_OPEN, HARNESS_SETTINGS_READY } from './harness-settings.js'
 
 const PREFIX = 'data-arkme-session-'
@@ -123,8 +125,13 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   mark(host, 'anchor')
   const identity = doc.createElement('span')
   mark(identity, 'identity')
-  identity.textContent = HARNESS_CONVERSATION_NAME
-  identity.title = HARNESS_CONVERSATION_NAME
+  const renderIdentity = () => {
+    const name = harnessConversationName()
+    if (identity.textContent !== name) identity.textContent = name
+    if (identity.title !== name) identity.title = name
+  }
+  renderIdentity()
+  const stopIdentity = [arkmeArkoProfileStore.subscribe(renderIdentity), subscribeArkmeLocale(renderIdentity)]
   identity.setAttribute('role', 'heading')
   identity.setAttribute('aria-level', '2')
   const trigger = doc.createElement('button')
@@ -393,7 +400,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
     for (const [node, key] of toolbarMarks) mark(node, key)
     const tools = toolbarMarks.find(([, key]) => key === 'tools-actions')?.[0]
     if (tools) {
-      const settingsLabel = next.copy.expand === 'Open sidebar' ? 'DeepSeek Harness settings' : 'DeepSeek Harness 设置'
+      const settingsLabel = next.copy.expand === 'Open sidebar' ? `${harnessConversationName()} settings` : `${harnessConversationName()} 设置`
       if (settings.getAttribute('aria-label') !== settingsLabel) settings.setAttribute('aria-label', settingsLabel)
       if (settings.title !== settingsLabel) settings.title = settingsLabel
       const settingsPending = !doc.documentElement.hasAttribute(HARNESS_SETTINGS_READY)
@@ -601,6 +608,7 @@ export function installHarnessSessionDropdown(doc: Document): () => void {
   sync()
   return () => {
     disposed = true
+    for (const stop of stopIdentity) stop()
     observer.disconnect()
     doc.removeEventListener('pointerdown', pointer, true)
     doc.removeEventListener('click', click)

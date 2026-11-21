@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
-  arkoPresentationName, ArkmeArkoProfileStore,
+  arkoPresentationName, ArkmeArkoProfileStore, sharedArkoProfileStore,
 } from '../src/client/arko-profile-store.js'
 
 describe('Arko profile presentation', () => {
@@ -47,5 +47,44 @@ describe('Arko profile presentation', () => {
       userId: 10001,
       profile: { displayName: '小可', version: 3 },
     })
+  })
+})
+
+describe('Arko profile store across the embedded harness frame', () => {
+  function frame(parent?: object): Window {
+    const win = { document: {} } as unknown as Window & { parent: Window }
+    win.parent = (parent ?? win) as Window
+    return win
+  }
+
+  it('gives the iframe bundles the store the outer app writes', () => {
+    const top = frame()
+    const outer = sharedArkoProfileStore(top)
+    const embedded = sharedArkoProfileStore(frame(frame(top)))
+    expect(embedded).toBe(outer)
+
+    const label = vi.fn()
+    embedded.subscribe(label)
+    outer.activateUser(10001)
+    outer.setProfile(10001, { displayName: '小可', version: 2 })
+    expect(label).toHaveBeenCalledTimes(2)
+    expect(arkoPresentationName(embedded.getSnapshot().profile)).toBe('小可')
+  })
+
+  it('stops at a cross-origin parent and keeps a store of its own', () => {
+    const foreign = {} as Window
+    Object.defineProperty(foreign, 'document', { get() { throw new Error('SecurityError') } })
+    const child = frame(foreign)
+    expect(sharedArkoProfileStore(child)).toBe(sharedArkoProfileStore(child))
+    expect(Object.getOwnPropertySymbols(foreign)).toHaveLength(0)
+  })
+
+  it('keeps notifying the other labels when one listener throws', () => {
+    const store = new ArkmeArkoProfileStore()
+    const live = vi.fn()
+    store.subscribe(() => { throw new Error('unloaded frame') })
+    store.subscribe(live)
+    store.activateUser(10001)
+    expect(live).toHaveBeenCalledTimes(1)
   })
 })

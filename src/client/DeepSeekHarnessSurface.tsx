@@ -7,6 +7,7 @@ import { watchHarnessSurfaceViewport } from './harness-surface-viewport.js'
 import { watchHarnessWindowDrag } from './harness-window-drag.js'
 import { arkmeTheme } from './arkme-theme.js'
 import { watchHarnessDocument } from './harness-document.js'
+import { useHarnessConversationName } from './conversation-header-layout.js'
 
 export const DEEPSEEK_HARNESS_EMBED_QUERY = 'arkme-harness-embed'
 export const DEEPSEEK_HARNESS_NATIVE_SETTINGS_QUERY = 'arkme-harness-native-settings'
@@ -64,6 +65,7 @@ function NativeAccountSurface(props: SurfaceProps) {
 
 /** One document per account. Selection never changes the page URL or boot graph. */
 function NativeSurface({ visible = true, nativeSettings = false, accountId, accountScope, followSession = true, source }: SurfaceProps & { source: NativeSessionRequest }) {
+  const harnessName = useHarnessConversationName()
   const [url] = useState(() => deepSeekHarnessEmbedUrl(nativeSettings))
   const [documentStarted, setDocumentStarted] = useState(false)
   const [boot, setBoot] = useState<'loading' | 'stalled' | 'failed' | 'ready'>('loading')
@@ -138,12 +140,12 @@ function NativeSurface({ visible = true, nativeSettings = false, accountId, acco
       zIndex: visible ? 1 : 0,
     }}
     aria-hidden={visible ? undefined : true}
-    aria-label="DeepSeek Harness"
+    aria-label={harnessName}
   >
     <iframe
       key={`${accountId}:${accountScope}:${attempt}`}
       ref={frameRef}
-      title="DeepSeek Harness"
+      title={harnessName}
       src={url}
       style={{ ...styles.frame, visibility: documentStarted ? 'inherit' : 'hidden' }}
       loading="eager"
@@ -157,7 +159,7 @@ function NativeSurface({ visible = true, nativeSettings = false, accountId, acco
       background: arkmeTheme.base, color: arkmeTheme.text, display: 'grid', placeItems: 'center',
     }}>
       <div style={{ display: 'grid', justifyItems: 'center', gap: 12, padding: 24, textAlign: 'center' }}>
-        <strong style={{ fontSize: 16, fontWeight: 500 }}>DeepSeek Harness</strong>
+        <strong style={{ fontSize: 16, fontWeight: 500 }}>{harnessName}</strong>
         <div role="status" aria-live="polite" style={{ fontSize: 14, color: arkmeTheme.secondary }}>
           {boot === 'failed' ? '对话加载失败，请重试' : boot === 'stalled' ? '对话加载较慢，仍在尝试…' : '正在加载对话…'}
         </div>

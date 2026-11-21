@@ -9,9 +9,9 @@ import { ArkmeHomeTourSession } from '../src/client/home-tour-session.js'
 const directoryIds = ['harness', 'arko', 'send-to-self', 'official-author'] as const
 const navIds = ['contacts', 'calls', 'recordings', 'calendar', 'world', 'extensions'] as const
 const ids = [...directoryIds, ...navIds]
-const titles = ['DeepSeek Harness', 'Arko', '发给自己', '联系作者', '联系人', '通话', '录音', '日历', '世界', '市集']
+const titles = ['Arko · 本机', 'Arko', '发给自己', '联系作者', '联系人', '通话', '录音', '日历', '世界', '市集']
 const descriptions = [
-  '使用原生 AI 工作台，与模型对话、处理任务和编写代码。',
+  '在这台电脑上工作的 Arko，可以处理文件、任务和代码。',
   '你的个人 AI 助手，可以结合记录回答问题，帮你整理信息。',
   '随手保存文字、图片和文件，把想法与重要内容留给自己。',
   '遇到问题或有使用建议，可以在这里直接联系作者。',
@@ -140,7 +140,7 @@ describe('home tour browser behavior', () => {
     expect(panel()).toBeNull()
     harnessFrame.contentDocument!.body.dataset.arkmeHarnessOnboarding = 'ready'
     await settle()
-    expect(currentTitle()).toBe('DeepSeek Harness')
+    expect(currentTitle()).toBe('Arko · 本机')
     expect(storage.size).toBe(0)
   })
 

@@ -39,7 +39,7 @@ it('places the banner below the original full search field and outside the scrol
     expect(directory.contains(slot)).toBe(false)
     expect(toolbar.compareDocumentPosition(slot) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(slot.compareDocumentPosition(directory) & dom.window.Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(directory.textContent).toContain('DeepSeek Harness')
+    expect(directory.textContent).toContain('Arko · 本机')
     expect(doc.querySelector('style')?.textContent).not.toContain('@container')
     expect(toolbar.style.containerType).toBe('')
   } finally { dom.window.close() }
